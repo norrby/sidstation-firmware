@@ -214,7 +214,7 @@ class Synth:
         for a, n in blocks: assert a == p, 'heap not contiguous'; p += n
         return p
 
-TABLES = (0xF6, 0x178, 0x1FA)   # wave, pulse width and filter table in the edit buffer, 0x82 bytes each
+TABLES = (0xF6, 0x178, 0x1FA)   # the waveform tables of oscillators 1-3 in the edit buffer, 0x82 bytes each
 
 def edit_buffer(rnd, unterminated=False):
     """A made-up patch in edit buffer layout: random values in every stored field, three tables of random steps
