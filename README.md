@@ -27,7 +27,7 @@ redistribution, so please do not upload the original or the built files anywhere
 
 ## Build
 
-Python 3.9 or later (on a Mac, the one in the Command Line Tools is enough).
+Python 3.9 or later, nothing else. Depending on the system the command is `python3`, `python` or `py`.
 
 ```
 python3 build.py sidos_v33_1.syx sidos_v33_2.syx out
@@ -40,13 +40,15 @@ the build always gives exactly this file). The self-test runs the new code in a 
 together with the R33 routines it calls, on a patch memory of made-up patches. `check.py` checks a
 file before it is sent. Nothing here sends MIDI.
 
-Tests: `python3 -m unittest discover tests` (set `SIDOS_R33=<folder with the R33 files>` to include
-the build).
+Tests: `python3 -m unittest discover tests`. Set the environment variable `SIDOS_R33` to a folder with
+the R33 files to include the build.
 
 ## Upgrade
 
-Use a program that sends `.syx` files with a pause between messages, such as
-[SysEx Librarian](https://www.snoize.com/sysexlibrarian/) on macOS, set to **150 ms**.
+You need a MIDI interface and a program that sends `.syx` files with a pause between messages;
+**150 ms** has worked. Elektron's C6 SysEx Manager, on the
+[SidStation download page](https://www.elektron.se/support-downloads/sidstation), can do this, but it
+does not run on current macOS, and its pause is set in ticks; it has not been tried for this upgrade.
 
 1. Back up your patches with an AllPatch dump.
 2. Connect MIDI Out to the synth's MIDI In and close every other program that sends MIDI.

@@ -64,4 +64,4 @@ if __name__ == '__main__':
     try:
         print(check(open(args[0], 'rb').read(), open(args[1], 'rb').read() if len(args) > 1 else None, orig))
     except CheckError as e:
-        raise SystemExit('ERROR: %s – do not send this file' % e)
+        raise SystemExit('ERROR: %s - do not send this file' % e)
