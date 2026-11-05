@@ -12,9 +12,11 @@ from osdecode import HDR, START, END, frames, decode, image
 R33_1 = '125c036a5f64d12fc3ec142b7baf06ca961b65455b69275fb6b7e473bc95710e'
 R33_2 = '94b48b7605a4d0bc4339fe8dd916760158baa44df408a37ce3595bd3f6fba194'
 V01_2 = '30a4522e39059f4fe20b7f269b2e0924c94f3ebcc60bdf25529781a460e2d746'
+V02_2 = '94c94a3e0b1ebd566a99292ecff1675cd439171748c3c56cae84238abefee953'
 KNOWN = {
     R33_2: 'Elektron OS 1.10 R33 (sidos_v33_2.syx)',
     V01_2: 'OS 1.12 R01: R33 + SysEx operations 05/06/07 (sidos_1.12_v01_2.syx)',
+    V02_2: 'OS 1.12 R02: R01 + fixes of R33 bugs (sidos_1.12_v02_2.syx)',
 }
 FLASHER = (0xFD5D, 0xFEBD)    # the flash routine, copied to RAM and run from there during an upgrade
 

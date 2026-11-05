@@ -7,7 +7,10 @@ A patch for the **Elektron SidStation**'s OS 1.10 R33 that adds three SysEx oper
 - **06** settings request: MIDI channel, current slot, clock source, update rate and more
 - **07** store: store the edit buffer to the current slot and report the result
 
-The result is **OS 1.12 R01**; everything else is R33 byte for byte. Details in
+It also fixes bugs in R33 that can corrupt the patch memory or crash the synth (see
+[Fixes](docs/protocol.md#fixes-of-r33-bugs-os-112-r02)).
+
+The result is **OS 1.12 R02**; everything else is R33 byte for byte. Details in
 [docs/protocol.md](docs/protocol.md); why not R34 in [docs/r34.md](docs/r34.md).
 
 Not affiliated with or endorsed by Elektron. **Use at your own risk:** a failed upgrade can leave
@@ -31,11 +34,11 @@ Python 3.9 or later, nothing else. Depending on the system the command is `pytho
 
 ```
 python3 build.py sidos_v33_1.syx sidos_v33_2.syx out
-python3 check.py out/sidos_1.12_v01_2.syx out/sidos_1.12_v01_1.syx --orig sidos_v33_2.syx
+python3 check.py out/sidos_1.12_v02_2.syx out/sidos_1.12_v02_1.syx --orig sidos_v33_2.syx
 ```
 
 `build.py` checks the inputs, applies the patch, runs the self-test and writes
-`out/sidos_1.12_v01_1.syx` and `out/sidos_1.12_v01_2.syx` (SHA-256 `30a4522e39059f4fe20b7f269b2e0924c94f3ebcc60bdf25529781a460e2d746`;
+`out/sidos_1.12_v02_1.syx` and `out/sidos_1.12_v02_2.syx` (SHA-256 `94c94a3e0b1ebd566a99292ecff1675cd439171748c3c56cae84238abefee953`;
 the build always gives exactly this file). The self-test runs the new code in a 68HC11 emulator
 together with the R33 routines it calls, on a patch memory of made-up patches. `check.py` checks a
 file before it is sent. Nothing here sends MIDI.
@@ -53,8 +56,8 @@ does not run on current macOS, and its pause is set in ticks; it has not been tr
 1. Back up your patches with an AllPatch dump.
 2. Connect MIDI Out to the synth's MIDI In and close every other program that sends MIDI.
 3. Hold **[D]** while switching the synth on: *Ready for FLASH upgrade*, one LED lit.
-4. Send `sidos_1.12_v01_1.syx`. The synth erases the chip; two LEDs light.
-5. Send `sidos_1.12_v01_2.syx` (about three minutes). The synth restarts with the new OS.
+4. Send `sidos_1.12_v02_1.syx`. The synth erases the chip; two LEDs light.
+5. Send `sidos_1.12_v02_2.syx` (about three minutes). The synth restarts with the new OS.
 
 **Red LED, everything stops:** switch off, hold [D] while switching on, and repeat from step 4
 (no greeting this time, one LED). If the transfer stopped at the very end, the flash routine may be

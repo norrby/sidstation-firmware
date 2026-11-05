@@ -15,11 +15,21 @@
 #   $808E  JSR $8114 -> JSR INIT    init: no pending requests before the SysEx state is set
 #   $82B1  LDD #$81F8 -> JMP DISP   the ID dispatch: an unknown id (not 01..04) is tested against 05..07
 #   $A1EB  JSR $A205 -> JSR TICK    the main loop: pending requests are served before the wait for the next tick
-# New code at $B400, below $B600 (on an E-series HC11 $B600-$B7FF can be internal EEPROM).
-# Data: the boot intro shows "OS1.12R01" / "norrby/2026" instead of "OS1.10 R33" / "(C) 2000". 1.12 because Elektron's
+# Fixes of bugs in R33 (R02):
+#   $8232  LDX #$823B -> JMP MIDIERR  a status byte before a channel message was complete restarted the synth
+#   $82B8  LDD #$0000 -> JMP CLEAR01  the 01 clear: refused while the main loop works in the patch heap
+#   $83D1  JSR $F96D -> JSR IALLOC    the 02 receiver's allocation: refused while the main loop works in the heap
+#   $831C  LDAB $121F -> JMP DPDATA   a status byte 80-F6 inside a DP frame (04) was taken as data: any address
+#   $83F6, $8418  LDX $1217 -> JMP RAWW, NIBW   the 02 receiver wrote past the patch it allocated
+#   $8D6D  JSR $CCC0 -> JSR DCSAFE    CC 16-19 with a direct control target of 83 or more jumped to $0000
+#   $AEBD, $AF2B  JSR $99A6 -> JSR LSAVE   the front panel's save, with BUSY set
+#   $AF27, $AFE2  JSR $FA08 -> JSR LFREE   the front panel's free (Store, Delete), with BUSY set, after a running 02
+# New code at $B300, below $B600 (on an E-series HC11 $B600-$B7FF can be internal EEPROM).
+# Data: the boot intro shows "OS 1.12 R02" / "norrby/2026" instead of "OS1.10 R33" / "(C) 2000". 1.12 because Elektron's
 # last OS is 1.11 R34. The second line needs 4 more bytes than the original; they come from the pauses before line 1
 # (00 08) and after line 2 (00 14), folded into the wait of the last character; the two extra characters cost one tick
-# each (140 ticks, limit 142). The intro is a script at $E1F6-$E24E read by $E155: 80-FF = cursor, 00 d = pause,
+# each (140 ticks, limit 142). The two spaces in line 1 are cursor moves (1 byte, no tick) instead of the space after
+# OS1.10; the byte that leaves comes from the pause after "SidStation" (00 18), folded into the wait of its "n". The intro is a script at $E1F6-$E24E read by $E155: 80-FF = cursor, 00 d = pause,
 # 01 = wipe, c d = print c then wait d ticks; nothing else reads these bytes.
 #
 # The file contains only the new bytes and where they go. The original bytes it lists (the hooks, the intro) are there
@@ -27,11 +37,12 @@
 from osdecode import decode, encode, image
 from hc11 import disassemble
 
-ORG, LIMIT = 0xB400, 0xB600
+ORG, LIMIT = 0xB300, 0xB600
 FREE = (0xB0E5, 0xB7FF)
 RAM = {'REQ': 0x13E0, 'TMP': 0x13E1, 'OP': 0x13E2, 'RQS': 0x13E3, 'RQW': 0x13E4,
        'SLOT': 0x13E5, 'NEWSZ': 0x13E6, 'SUM': 0x13E8, 'FREEB': 0x13EA,     # in reply order (sent as one run)
-       'OLDH': 0x13EC, 'HEND': 0x13EE, 'PER': 0x13F0}                       # PER: 5 bytes
+       'OLDH': 0x13EC, 'HEND': 0x13EE, 'PER': 0x13F0,                       # PER: 5 bytes
+       'BUSY': 0x13F5, 'ENDP': 0x13F6}                                        # ENDP: 2 bytes
 IDLE = 0x81F8          # the SysEx idle state (state pointer $7FFC)
 STATE = 0x7FFC
 STATUS = 0x8142        # handles A as a new status byte (does its own TAB)
@@ -49,6 +60,15 @@ FREEH = 0xFA08         # frees handle X and compacts the heap
 SAVE = 0x99A6          # stores the edit buffer to slot B; X = data pointer, or 0 if it does not fit
 REDRAW = 0x1323        # CLR = redraw the display (as the front panel after a store)
 HEAPTOP = 0x7800
+ALLOC = 0xF96D         # allocates D bytes: X = handle, or 0 (Z set) if they do not fit
+RX02 = 0x838B          # the 02 receiver's state, from the id byte to F7
+DROP = 0x82FE          # LED off, redraw, idle state, RTI: how R33 ends a frame it does not act on
+CLR01 = 0x82BB         # the 01 clear after its LDD #$0000
+DCLOOK = 0xCCC0        # looks up target B in the direct control table at $D873, which covers 0..82
+DCSKIP = 0x8D7A        # in the CC 16-19 handler, past the call through the table entry
+DPNEXT = 0x831F        # the DP receiver after its LDAB $121F
+RAWNEXT, RAWSKIP = 0x83FB, 0x83FF   # the 02 receiver's name bytes: after the store, and the count without it
+NIBNEXT, NIBSKIP = 0x841D, 0x8421   # the 02 receiver's data bytes: the same
 
 # --- a small HC11 assembler (one table, used for assembling and for the emulator; the listing is cross-checked
 # against the independent disassembler hc11.py) -------------------------------------------------------------------
@@ -64,7 +84,8 @@ OPS = {
     'CPY': dict(imm='188c', ext='18bc', ix='1aac', iy='18ac'),
     'CMPA': dict(imm='81', ext='b1', ix='a1', iy='18a1'), 'CMPB': dict(imm='c1', ext='f1', ix='e1', iy='18e1'),
     'ANDA': dict(imm='84', ix='a4'), 'ANDB': dict(imm='c4', ix='e4'), 'ORAA': dict(imm='8a'),
-    'ADDA': dict(imm='8b'), 'ADCA': dict(imm='89'), 'ADDB': dict(imm='cb', ix='eb'), 'SUBA': dict(imm='80'),
+    'ADDA': dict(imm='8b'), 'ADCA': dict(imm='89'), 'ADDB': dict(imm='cb', ext='fb', ix='eb'), 'SUBA': dict(imm='80'),
+    'SUBB': dict(imm='c0', ext='f0'),
     'CLR': dict(ext='7f', ix='6f', iy='186f'), 'TST': dict(ext='7d', ix='6d', iy='186d'),
     'INC': dict(ext='7c', ix='6c'), 'DEC': dict(ext='7a', ix='6a'),
     'JSR': dict(ext='bd', ix='ad'), 'JMP': dict(ext='7e', ix='6e'),
@@ -131,6 +152,7 @@ INIT:
     STAA {R('REQ')}
     STAA {R('RQS')}
     STAA {R('RQW')}
+    CLR {R('BUSY')}
     JMP ${SYSEXINIT:04X}
 
 ; DISP: from $82B1, A = the id byte after the header, not 01..04
@@ -298,8 +320,9 @@ SETTINGS:
     JSR ${0x84E6:04X}               ; B bytes from (X)+ as nibbles: period, ExtCl period, lock counter
     JMP SEND_F7
 
-; STORE: the edit buffer to the current slot, then the 47 reply
+; STORE: the edit buffer to the current slot, then the 47 reply. BUSY is set from before the busy test to the reply.
 STORE:
+    INC {R('BUSY')}
     CLR {R('NEWSZ')}
     CLR ${RAM['NEWSZ'] + 1:04X}
     CLR {R('SUM')}
@@ -362,6 +385,7 @@ W_SUM:
     JSR HFREE
     CLRA
 REPLY:
+    DEC {R('BUSY')}
     PSHA
     JSR ${HEADER:04X}               ; clobbers A
     LDAA #$47
@@ -383,6 +407,149 @@ HFREE:
     SUBD {R('HEND')}
     STD {R('FREEB')}
     RTS
+
+; --- R02: fixes of bugs in R33 ------------------------------------------------------------------------------------
+; BUSY counts the main loop's calls into the patch heap. $F96D (allocate), $F9CD (heap end) and $FA08 (free and
+; compact) share the scratch bytes $1371-$1379, and $FA08 moves patches with interrupts enabled. R33's 02 receiver
+; allocates in the interrupt ($83D1) and its 01 clear wipes the slot and handle tables in the interrupt ($82B8): in
+; the middle of a store either left handles pointing outside the heap, and the next compaction overwrote RAM.
+
+; LSAVE: $99A6 for the front panel ($AEBD, $AF2B), with BUSY set; registers as $99A6 leaves them
+LSAVE:
+    INC {R('BUSY')}
+    JSR ${SAVE:04X}
+    DEC {R('BUSY')}
+    RTS
+
+; LFREE: $FA08 for the front panel ($AF27 Store, $AFE2 Delete), with BUSY set. An 02 frame that allocated before
+; BUSY was set still writes into its patch, which $FA08 may move: first wait for that frame to end.
+LFREE:
+    INC {R('BUSY')}
+    BSR WAIT02
+    JSR ${FREEH:04X}
+    DEC {R('BUSY')}
+    RTS
+
+; WAIT02: waits while the 02 receiver is busy, at most about 1.2 s (2 x 65536 turns of 19 cycles); a frame that has
+; not ended by then is dropped as R33 drops a broken one. All registers preserved.
+WAIT02:
+    PSHX
+    PSHY
+    PSHA
+    PSHB
+    LDY #2
+W2_OUT:
+    LDX #$0000
+W2_IN:
+    LDD ${STATE:04X}
+    CPD #${RX02:04X}
+    BNE W2_END
+    DEX
+    BNE W2_IN
+    DEY
+    BNE W2_OUT
+    TPA
+    SEI
+    LDX ${STATE:04X}                ; again with interrupts off
+    CPX #${RX02:04X}
+    BNE W2_I
+    LDX #${IDLE:04X}
+    STX ${STATE:04X}
+    JSR ${LEDOFF:04X}                ; preserves A
+W2_I:
+    TAP
+W2_END:
+    PULB
+    PULA
+    PULY
+    PULX
+    RTS
+
+; IALLOC: from $83D1, the 02 receiver's allocation in the interrupt, X = the size from the frame. It fails as $F96D
+; does when the memory is full (X = 0, Z set; the receiver then drops the frame at $8388) while BUSY, or when the size
+; is $4000 or more (a status byte among the size bytes). On success ENDP = the end of the new patch, X = its handle.
+IALLOC:
+    TST {R('BUSY')}
+    BNE IA_NO
+    CPX #$4000
+    BCC IA_NO
+    JSR ${ALLOC:04X}
+    BEQ IA_RET
+    PSHA
+    PSHB
+    LDD $00,X                       ; the new patch
+    ADDD $1371                      ; plus its size, as $F96D left it
+    STD {R('ENDP')}                 ; not 0: Z clear
+    PULB
+    PULA
+IA_RET:
+    RTS
+IA_NO:
+    LDX #$0000
+    RTS
+
+; RAWW, NIBW: from $83F6 and $8418, the 02 receiver's stores (A = the byte, $1217 = where); bytes past ENDP are
+; dropped, so a frame longer than its size no longer overwrites the next patch, or past $7800 the RAM vectors.
+RAWW:
+    LDX $1217
+    CPX {R('ENDP')}
+    BCC RW_NO
+    STAA $00,X
+    JMP ${RAWNEXT:04X}
+RW_NO:
+    JMP ${RAWSKIP:04X}
+NIBW:
+    LDX $1217
+    CPX {R('ENDP')}
+    BCC NW_NO
+    STAA $00,X
+    JMP ${NIBNEXT:04X}
+NW_NO:
+    JMP ${NIBSKIP:04X}
+
+; DPDATA: from $831C, a byte 00..F6 in a DP frame (F7 and F8..FF are handled before). R33 stored 80..F6 as data, so a
+; status byte in the address made the DP write anywhere in RAM; now it ends the frame and is handled as a status byte.
+DPDATA:
+    TSTA
+    BPL DP_OK
+    JMP NOTRT
+DP_OK:
+    LDAB $121F
+    JMP ${DPNEXT:04X}
+
+; CLEAR01: from $82B8, the 01 clear in the interrupt; while BUSY the frame is dropped
+CLEAR01:
+    TST {R('BUSY')}
+    BNE C1_NO
+    LDD #$0000
+    JMP ${CLR01:04X}
+C1_NO:
+    JMP ${DROP:04X}
+
+; MIDIERR: from $8232, A = a status byte 80..F7 before a channel message was complete. R33 printed "Jag skiter väl i
+; MIDI." and restarted. The incomplete message is taken back out of the ring buffer $1500 (the main loop reads only
+; complete messages, counted in $1205): the status byte and the $1213 - $1212 data bytes so far. Then A is handled
+; as a new status byte from the idle state, as the MIDI specification asks.
+MIDIERR:
+    LDAB $1203
+    ADDB $1212
+    SUBB $1213
+    DECB
+    STAB $1203
+    LDX #${IDLE:04X}
+    STX ${STATE:04X}
+    JMP ${STATUS:04X}
+
+; DCSAFE: from $8D6D, B = the patch's direct control target for CC 16-19. R33 read past the table for 83..255 and
+; jumped through a zero pointer; such a target now does nothing.
+DCSAFE:
+    CMPB #83
+    BCC DC_NO
+    JMP ${DCLOOK:04X}
+DC_NO:
+    INS                             ; this call's return address
+    INS
+    JMP ${DCSKIP:04X}
 """
 
 CODE, L = assemble(SRC, ORG)
@@ -390,15 +557,30 @@ def typed(text, last):
     """Script bytes that print text, waiting 0 ticks after each character and last ticks after the last one."""
     return bytes([x for ch in text for x in (ch, 0)][:-1]) + bytes([last])
 
-INTRO = (0xE223,
-         bytes.fromhex('0008') + bytes.fromhex('4f00530031012e01310030002000520033003308') + b'\xc6'
+INTRO = (0xE21E,
+         bytes.fromhex('00001801850008') + bytes.fromhex('4f00530031012e01310030002000520033003308') + b'\xc6'
          + bytes([x for ch in b'(C) 2000' for x in (ch, 0)]) + bytes.fromhex('0014'),
-         bytes.fromhex('4f00530031012e0131003200520030003108') + b'\xc5' + typed(b'norrby/2026', 0x14 + 0x08))
+         bytes.fromhex('180185') + bytes.fromhex('4f005300') + b'\x88' + bytes.fromhex('31012e0131003200') + b'\x8d'
+         + bytes.fromhex('5200300032') + bytes.fromhex('08') + b'\xc5' + typed(b'norrby/2026', 0x14 + 0x08))
 assert len(INTRO[1]) == len(INTRO[2])
 HOOKS = [  # address, original, new
     (0x808E, bytes.fromhex('bd8114'), bytes([0xbd, L['INIT'] >> 8, L['INIT'] & 0xff])),
     (0x82B1, bytes.fromhex('cc81f8'), bytes([0x7e, L['DISP'] >> 8, L['DISP'] & 0xff])),
     (0xA1EB, bytes.fromhex('bda205'), bytes([0xbd, L['TICK'] >> 8, L['TICK'] & 0xff])),
+]
+def jsr(op, label): return bytes([op, L[label] >> 8, L[label] & 0xff])
+HOOKS += [  # R02
+    (0x8232, bytes.fromhex('ce823b'), jsr(0x7e, 'MIDIERR')),
+    (0x82B8, bytes.fromhex('cc0000'), jsr(0x7e, 'CLEAR01')),
+    (0x831C, bytes.fromhex('f6121f'), jsr(0x7e, 'DPDATA')),
+    (0x83D1, bytes.fromhex('bdf96d'), jsr(0xbd, 'IALLOC')),
+    (0x83F6, bytes.fromhex('fe1217'), jsr(0x7e, 'RAWW')),
+    (0x8418, bytes.fromhex('fe1217'), jsr(0x7e, 'NIBW')),
+    (0x8D6D, bytes.fromhex('bdccc0'), jsr(0xbd, 'DCSAFE')),
+    (0xAEBD, bytes.fromhex('bd99a6'), jsr(0xbd, 'LSAVE')),
+    (0xAF27, bytes.fromhex('bdfa08'), jsr(0xbd, 'LFREE')),
+    (0xAF2B, bytes.fromhex('bd99a6'), jsr(0xbd, 'LSAVE')),
+    (0xAFE2, bytes.fromhex('bdfa08'), jsr(0xbd, 'LFREE')),
 ]
 
 def build(orig):

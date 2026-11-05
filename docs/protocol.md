@@ -1,6 +1,6 @@
 # Protocol
 
-## New SysEx operations (OS 1.12 R01)
+## New SysEx operations (OS 1.12 R01 and later)
 
 All frames start with Elektron's SidStation header `F0 00 20 3C 01 00`, followed by an id.
 The stock OS knows ids 01–04; R01 adds 05–07. Any other id is ignored, as before.
@@ -74,3 +74,26 @@ F0 00 45 01 69 F7              done: restart
   included. With a wrong sum the flash routine stops with the red LED.
 - The frames are programmed in file order. In R33 that is address order, so the flash routine itself
   ($FD5D–$FEBC) is written close to the end of the transfer.
+
+## Fixes of R33 bugs (OS 1.12 R02)
+
+R02 is R01 with these fixes; the SysEx operations are unchanged.
+
+1. **Patch frames during a store.** R33 receives a patch (02) inside the MIDI interrupt, and allocates its memory
+   there. Store and Delete on the front panel move the patches in memory with interrupts enabled, and both use the
+   same scratch bytes as the allocation. A patch frame arriving in the middle of a store left a patch pointing
+   outside the patch memory, and the next store overwrote RAM. Now, while a store or delete is working in the patch
+   memory (and during 07), an arriving 02 frame is dropped, as R33 drops one when the memory is full, and a clear
+   (01) is ignored. Store and Delete first wait, at most about a second, for an 02 frame that is already being
+   received.
+2. **Patch frames longer than their size.** R33 wrote every data byte of an 02 frame, also past the size the frame
+   gave, into the next patch or past the end of the patch memory. Bytes past the end are now dropped, and a size of
+   4000 hex or more is refused.
+3. **Status bytes inside a DP frame (04).** R33 took a byte 80–F6 inside a DP frame as data, so the address could
+   point anywhere in RAM, including the stored patches. Such a byte now ends the frame and is handled as a new
+   status byte, as MIDI requires.
+4. **Status bytes inside a channel message.** R33 restarted the synth when a status byte arrived before a channel
+   message was complete (a cable plugged in while playing, two merged streams). The incomplete message is now
+   dropped and the byte handled as a new status byte.
+5. **Direct control targets above 82.** CC 16–19 with a direct control target of 83 or more made R33 read past
+   its table and jump to a random address. Such a target now does nothing.

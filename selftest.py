@@ -96,6 +96,7 @@ class CPU:
         elif m in ('ADDA', 'ADDB'): r = reg8[m[-1]]; setattr(self, r, self.add(getattr(self, r), self.r8(ea), 8))
         elif m == 'ADCA': self.a = self.add(self.a, self.r8(ea), 8, int(self.c))
         elif m == 'SUBA': self.a = self.sub(self.a, self.r8(ea), 8)
+        elif m == 'SUBB': self.b = self.sub(self.b, self.r8(ea), 8)
         elif m == 'CLR': self.w8(ea, 0); self.n = self.v = self.c = False; self.z = True
         elif m == 'TST': self.nz(self.r8(ea)); self.v = self.c = False
         elif m in ('INC', 'DEC'):
@@ -103,6 +104,7 @@ class CPU:
         elif m == 'JSR': self.push16(nxt); self.calls.append(ea); return ea
         elif m == 'JMP': return ea
         elif m == 'RTS': return self.pull16()
+        elif m == 'INS': self.sp = (self.sp + 1) & 0xffff
         elif m == 'RTI': return 'RTI'
         elif m in ('INX', 'DEX'): self.x = (self.x + (1 if m == 'INX' else -1)) & 0xffff; self.z = self.x == 0
         elif m in ('INY', 'DEY'): self.y = (self.y + (1 if m == 'INY' else -1)) & 0xffff; self.z = self.y == 0
@@ -334,10 +336,65 @@ def selftest(img, seed=1):
     sy = Synth(img, pats, cur); sy.frame([5, 7, 0xF7]); sy.frame([6, 0xF7]); sy.frame([7, 0x7F, 0xF7])
     t = sy.tick().tx; ids = [t[k + 6] for k in range(len(t) - 6) if t[k:k + 6] == HDR]
     assert ids[0] in (2, 3) and ids[1:] == [0x46, 0x47], ids
+    assert sy.m[RAM['BUSY']] == 0, 'BUSY left set by STORE'
+    fixes(img, pats)
     shots, t, k = intro(img)
-    assert shots[1][1][0][5:14] == 'OS1.12R01' and shots[1][1][1][5:16] == 'norrby/2026', shots
+    assert shots[1][1][0][5:16] == 'OS 1.12 R02' and shots[1][1][1][5:16] == 'norrby/2026', shots
     assert k == 0xE24F and t <= 142, (hex(k), t)            # ends on its 00 80 hold, within the 142 ticks
     return 'self-test ok (%d generated patches; intro %r / %r, %d ticks)' % (len(pats), shots[1][1][0][4:], shots[1][1][1][4:], t)
+
+def fixes(img, pats):
+    """R02's fixes of R33, each routine on its own (the full system is tested with machine.py)."""
+    sy = Synth(img, pats); B = RAM['BUSY']
+    def call(addr, exits, **regs):
+        c = CPU(sy.m)
+        for k, v in regs.items(): setattr(c, k, v)
+        c.push16(0); sp0 = c.sp
+        return c.run(addr, exits | {0}), c, sp0
+    # IALLOC: through to $F96D when free, X = 0 and Z set while BUSY
+    r, c, _ = call(L['IALLOC'], {ALLOC}); assert r == ALLOC
+    sy.m[B] = 1; r, c, _ = call(L['IALLOC'], {ALLOC}); assert r == 0 and c.x == 0 and c.z; sy.m[B] = 0
+    # IALLOC: a size of $4000 or more refused; a real allocation sets ENDP to the end of the new patch
+    r, c, _ = call(L['IALLOC'], set(), x=0x4000); assert r == 0 and c.x == 0 and c.z
+    end = sy.heap_ok(); r, c, _ = call(L['IALLOC'], set(), x=300)
+    assert r == 0 and c.x and not c.z and sy.m[c.x:c.x + 2] == end.to_bytes(2, 'big')
+    assert int.from_bytes(sy.m[RAM['ENDP']:RAM['ENDP'] + 2], 'big') == end + 300 and sy.heap_ok() == end + 300
+    # RAWW, NIBW: stored below ENDP, dropped at and past it
+    for lab, nxt, skip in (('RAWW', RAWNEXT, RAWSKIP), ('NIBW', NIBNEXT, NIBSKIP)):
+        for at, want in ((end + 299, nxt), (end + 300, skip), (0x7FF0, skip)):
+            sy.m[0x1217:0x1219] = at.to_bytes(2, 'big'); old = sy.m[at]
+            r, c, _ = call(L[lab], {nxt, skip}, a=0x5A)
+            assert r == want and sy.m[at] == (0x5A if want == nxt else old), (lab, hex(at))
+    # DPDATA: data bytes go on to the DP receiver, a status byte ends the frame and is handled as one
+    for byte in (0, 0x7F): r, c, _ = call(L['DPDATA'], {DPNEXT, STATUS}, a=byte); assert r == DPNEXT
+    for byte in (0x80, 0x90, 0xF0, 0xF6):
+        sy.m[STATE:STATE + 2] = (0x830B).to_bytes(2, 'big')
+        r, c, _ = call(L['DPDATA'], {DPNEXT, STATUS}, a=byte); assert r == STATUS and c.a == byte and sy.state() == IDLE
+    sy = Synth(img, pats)
+    # CLEAR01: on to the clear when free, dropped while BUSY
+    r, c, _ = call(L['CLEAR01'], {CLR01, DROP}); assert r == CLR01 and c.d == 0
+    sy.m[B] = 2; r, c, _ = call(L['CLEAR01'], {CLR01, DROP}); assert r == DROP; sy.m[B] = 0
+    # MIDIERR: the incomplete message leaves the ring buffer, A goes on as a status byte from the idle state
+    for need, left, back in ((2, 2, 1), (2, 1, 2), (1, 1, 1)):
+        sy.m[0x1203] = 0x01; sy.m[0x1213] = need; sy.m[0x1212] = left
+        r, c, _ = call(L['MIDIERR'], {STATUS}, a=0x92)
+        assert r == STATUS and c.a == 0x92 and sy.m[0x1203] == (0x01 - back) & 0xff and sy.state() == IDLE
+    # DCSAFE: 0..82 looked up, 83..255 skip the call with the stack as before the call
+    for b in (0, 82): r, c, _ = call(L['DCSAFE'], {DCLOOK, DCSKIP}, b=b); assert r == DCLOOK
+    for b in (83, 0x7F, 0xFF):
+        r, c, sp0 = call(L['DCSAFE'], {DCLOOK, DCSKIP}, b=b); assert r == DCSKIP and c.sp == sp0 + 2
+    # LFREE: frees and compacts with BUSY set, BUSY back to 0, the other patches intact
+    cur = sorted(pats)[3]; before = sy.slots(); h = int.from_bytes(sy.m[0x1A00 + 2 * cur:0x1A02 + 2 * cur], 'big')
+    sy.m[0x1A00 + 2 * cur:0x1A02 + 2 * cur] = b'\0\0'
+    r, c, _ = call(L['LFREE'], set(), x=h); assert r == 0 and sy.m[B] == 0 and FREEH in c.calls
+    assert sy.slots() == {s: d for s, d in before.items() if s != cur}; sy.heap_ok()
+    # LFREE while an 02 frame is running that never ends: dropped after the wait, then freed as above
+    sy = Synth(img, pats); sy.m[STATE:STATE + 2] = RX02.to_bytes(2, 'big')
+    h = int.from_bytes(sy.m[0x1A00 + 2 * cur:0x1A02 + 2 * cur], 'big'); sy.m[0x1A00 + 2 * cur:0x1A02 + 2 * cur] = b'\0\0'
+    c = CPU(sy.m); c.x = h; c.push16(0); assert c.run(L['LFREE'], {0}, limit=2_000_000) == 0
+    assert sy.state() == IDLE and sy.m[B] == 0 and c.i is False; sy.heap_ok()
+    # LSAVE: $99A6 with BUSY set
+    r, c, _ = call(L['LSAVE'], {SAVE}); assert r == SAVE and sy.m[B] == 1; sy.m[B] = 0
 
 def intro(img):
     """Runs the intro script ($E1F6, as $E155 reads it): the screen at each wipe and the tick count."""

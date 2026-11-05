@@ -1,12 +1,12 @@
-# build.py – builds SidStation OS 1.12 R01 from Elektron's OS 1.10 R33 files. Writes files only; sends nothing.
+# build.py – builds SidStation OS 1.12 R02 from Elektron's OS 1.10 R33 files. Writes files only; sends nothing.
 #
 # Usage: python3 build.py <sidos_v33_1.syx> <sidos_v33_2.syx> <out dir> [--list]
 #
 #   1. checks that the inputs are exactly R33 (SHA-256)
 #   2. applies the patch (sysops.py) and checks that the result differs from R33 exactly where intended
 #   3. runs the self-test (selftest.py) and cross-checks the new code with the disassembler (hc11.py)
-#   4. checks the result as check.py does; it must be byte for byte the released R01 file
-#   5. writes <out dir>/sidos_1.12_v01_1.syx (the start frame, as R33's) and sidos_1.12_v01_2.syx
+#   4. checks the result as check.py does; it must be byte for byte the released R02 file
+#   5. writes <out dir>/sidos_1.12_v02_1.syx (the start frame, as R33's) and sidos_1.12_v02_2.syx
 # --list prints the labels and a listing of the new code.
 import sys, os, hashlib
 import sysops, selftest, check
@@ -30,14 +30,14 @@ def main(args):
     bad = sysops.crosscheck()
     if bad: raise SystemExit('ERROR: hc11.py disagrees with the assembler: %s' % bad[:10])
     print('cross-check with hc11.py ok')
-    if hashlib.sha256(new).hexdigest() != check.V01_2:
-        raise SystemExit('ERROR: the result is not the released R01 file (sha256 %s); a changed patch needs a new version '
+    if hashlib.sha256(new).hexdigest() != check.V02_2:
+        raise SystemExit('ERROR: the result is not the released R02 file (sha256 %s); a changed patch needs a new version '
                          'and its sha256 in check.py' % hashlib.sha256(new).hexdigest())
     print(check.check(new, start, orig))
 
     out = args[2]
     os.makedirs(out, exist_ok=True)
-    for name, d in (('sidos_1.12_v01_1.syx', start), ('sidos_1.12_v01_2.syx', new)):
+    for name, d in (('sidos_1.12_v02_1.syx', start), ('sidos_1.12_v02_2.syx', new)):
         p = os.path.join(out, name)
         with open(p, 'wb') as f: f.write(d)
         print('wrote %s (%d bytes)' % (p, len(d)))
