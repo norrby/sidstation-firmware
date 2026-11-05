@@ -271,7 +271,7 @@ def selftest(img, seed=1):
     # 08: the version reply, count first
     assert sy.frame([8, 0xF7]) == ['RTI', 'RTI'] and sy.state() == IDLE
     v = reply(sy.tick(), 0x48)
-    assert v == [3, 1, 12, 2] and v[1:] == list(VERSION), v
+    assert v == [3, 1, 12, 3] and v[1:] == list(VERSION), v
     assert sy.tick().tx == [], 'one request gives one reply'
     assert sy.frame([8, 0x00]) == ['RTI', 'RTI'] and sy.tick().tx == [], '08 with a data byte: no request'
     # 05 as before: slot 7, 7F = current, 99, refusals
@@ -345,7 +345,7 @@ def selftest(img, seed=1):
     assert sy.m[RAM['BUSY']] == 0, 'BUSY left set by STORE'
     fixes(img, pats)
     shots, t, k = intro(img)
-    assert shots[1][1][0][5:16] == 'OS 1.12 R02' and shots[1][1][1][5:16] == 'norrby/2026', shots
+    assert shots[1][1][0][5:16] == 'OS 1.12 R03' and shots[1][1][1][5:16] == 'norrby/2026', shots
     assert k == 0xE24F and t <= 142, (hex(k), t)            # ends on its 00 80 hold, within the 142 ticks
     return 'self-test ok (%d generated patches; intro %r / %r, %d ticks)' % (len(pats), shots[1][1][0][4:], shots[1][1][1][4:], t)
 

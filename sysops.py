@@ -25,8 +25,17 @@
 #   $8D6D  JSR $CCC0 -> JSR DCSAFE    CC 16-19 with a direct control target of 83 or more jumped to $0000
 #   $AEBD, $AF2B  JSR $99A6 -> JSR LSAVE   the front panel's save, with BUSY set
 #   $AF27, $AFE2  JSR $FA08 -> JSR LFREE   the front panel's free (Store, Delete), with BUSY set, after a running 02
-# New code at $B300, below $B600 (on an E-series HC11 $B600-$B7FF can be internal EEPROM).
-# Data: the boot intro shows "OS 1.12 R02" / "norrby/2026" instead of "OS1.10 R33" / "(C) 2000". 1.12 because Elektron's
+# Three channels (R03): byte 23 of a patch (PATCH_MODE2, $17 in the edit buffer, unused before) gives osc 2 and osc 3 their own
+# MIDI channels, counted from the base channel: low nibble osc 2, high nibble osc 3, mod 16; osc 1 stays on the base channel.
+# 0 and 0, as every older patch has, is R02 exactly. A voice plays the note on and note off of its channel as in Single mode
+# (its own sound, delay and Active); everything else stays on the base channel, and Poly counts as off.
+#   $81A4  LDX $1206 -> JMP ICH       the MIDI interrupt's channel test: note on/off also on osc 2's and osc 3's channels
+#   $8D0A, $8D0D  JMP $8E34/$8E72 -> JMP N3OFF/N3ON   the consumer's note off/on: per voice with three channels
+#   $8B11, $8B2A, $8B60, $8BE7  BRSET $16,Y #$08 -> JSR POLYQ + BCS   Poly as the engine sees it: off with three channels
+#   $8F13  BRSET $16,X #$08 + BRCLR $2D,X #$D0 -> JMP Q8F13            the same in the event dispatch
+#   $8DA9  LDX $1220 -> JSR V3CLR     CC 123 (all notes off) also clears the voices' held notes
+# New code from $B0E5 (the gap R33 leaves), below $B600 (on an E-series HC11 $B600-$B7FF can be internal EEPROM).
+# Data: the boot intro shows "OS 1.12 R03" / "norrby/2026" instead of "OS1.10 R33" / "(C) 2000". 1.12 because Elektron's
 # last OS is 1.11 R34. The second line needs 4 more bytes than the original; they come from the pauses before line 1
 # (00 08) and after line 2 (00 14), folded into the wait of the last character; the two extra characters cost one tick
 # each (140 ticks, limit 142). The two spaces in line 1 are cursor moves (1 byte, no tick) instead of the space after
@@ -35,16 +44,21 @@
 #
 # The file contains only the new bytes and where they go. The original bytes it lists (the hooks, the intro) are there
 # to be checked before anything is replaced.
+import re
 from osdecode import decode, encode, image
 from hc11 import disassemble
 
-ORG, LIMIT = 0xB300, 0xB600
+ORG, LIMIT = 0xB0E5, 0xB600
 FREE = (0xB0E5, 0xB7FF)
 RAM = {'REQ': 0x13E0, 'TMP': 0x13E1, 'OP': 0x13E2, 'RQS': 0x13E3, 'RQW': 0x13E4,
        'SLOT': 0x13E5, 'NEWSZ': 0x13E6, 'SUM': 0x13E8, 'FREEB': 0x13EA,     # in reply order (sent as one run)
        'OLDH': 0x13EC, 'HEND': 0x13EE, 'PER': 0x13F0,                       # PER: 5 bytes
-       'BUSY': 0x13F5, 'ENDP': 0x13F6, 'RQV': 0x13F8}                         # ENDP: 2 bytes
-VERSION = (1, 12, 2)   # OS 1.12 R02, the 48 reply
+       'BUSY': 0x13F5, 'ENDP': 0x13F6, 'RQV': 0x13F8,                         # ENDP: 2 bytes
+       # R03, three channels (RAM no run of the emulator touched, $13F5-$14FF): each voice's held notes (4 per voice, FF = none),
+       # then the message being handled and the saved filter envelope
+       'V3L': 0x1420, 'V3LE': 0x142C, 'V3K': 0x142C, 'V3ST': 0x142D, 'V3NT': 0x142E, 'V3VL': 0x142F, 'V3D': 0x1430,
+       'V3EV': 0x1431, 'V3E': 0x1432, 'V3P': 0x1433, 'V3M': 0x1435, 'V3F': 0x1436, 'V32D': 0x143A}   # V3P 2, V3F 4 bytes
+VERSION = (1, 12, 3)   # OS 1.12 R03, the 48 reply
 IDLE = 0x81F8          # the SysEx idle state (state pointer $7FFC)
 STATE = 0x7FFC
 STATUS = 0x8142        # handles A as a new status byte (does its own TAB)
@@ -85,9 +99,9 @@ OPS = {
     'CPD': dict(imm='1a83', ext='1ab3', ix='1aa3', iy='cda3'), 'CPX': dict(imm='8c', ext='bc', ix='ac', iy='cdac'),
     'CPY': dict(imm='188c', ext='18bc', ix='1aac', iy='18ac'),
     'CMPA': dict(imm='81', ext='b1', ix='a1', iy='18a1'), 'CMPB': dict(imm='c1', ext='f1', ix='e1', iy='18e1'),
-    'ANDA': dict(imm='84', ix='a4'), 'ANDB': dict(imm='c4', ix='e4'), 'ORAA': dict(imm='8a'),
+    'BITA': dict(imm='85'), 'ANDA': dict(imm='84', ix='a4'), 'ANDB': dict(imm='c4', ix='e4'), 'ORAA': dict(imm='8a', ext='ba'),
     'ADDA': dict(imm='8b'), 'ADCA': dict(imm='89'), 'ADDB': dict(imm='cb', ext='fb', ix='eb'), 'SUBA': dict(imm='80'),
-    'SUBB': dict(imm='c0', ext='f0'),
+    'SUBB': dict(imm='c0', ext='f0', ix='e0'),
     'CLR': dict(ext='7f', ix='6f', iy='186f'), 'TST': dict(ext='7d', ix='6d', iy='186d'),
     'INC': dict(ext='7c', ix='6c'), 'DEC': dict(ext='7a', ix='6a'),
     'JSR': dict(ext='bd', ix='ad'), 'JMP': dict(ext='7e', ix='6e'),
@@ -96,9 +110,9 @@ OPS = {
 INH = {'INX': '08', 'DEX': '09', 'INY': '1808', 'DEY': '1809', 'XGDX': '8f', 'XGDY': '188f', 'ABX': '3a', 'ABY': '183a',
        'CLRA': '4f', 'CLRB': '5f', 'TSTA': '4d', 'TSTB': '5d', 'TAB': '16', 'TBA': '17', 'PSHA': '36', 'PSHB': '37',
        'PULA': '32', 'PULB': '33', 'PSHX': '3c', 'PULX': '38', 'PSHY': '183c', 'PULY': '1838', 'TPA': '07', 'TAP': '06',
-       'SEI': '0f', 'CLI': '0e', 'RTS': '39', 'RTI': '3b', 'NOP': '01', 'LSRA': '44', 'LSRB': '54', 'ASLA': '48',
+       'SEI': '0f', 'CLI': '0e', 'SEC': '0d', 'CLC': '0c', 'RTS': '39', 'RTI': '3b', 'NOP': '01', 'LSRA': '44', 'LSRB': '54', 'ASLA': '48',
        'ASLB': '58', 'ROLA': '49', 'ROLB': '59', 'INCA': '4c', 'INCB': '5c', 'DECA': '4a', 'DECB': '5a', 'ASLD': '05',
-       'LSRD': '04', 'IDIV': '02', 'CBA': '11', 'ABA': '1b', 'COMA': '43', 'NEGA': '40', 'TSX': '30', 'TXS': '35',
+       'LSRD': '04', 'IDIV': '02', 'CBA': '11', 'ABA': '1b', 'COMA': '43', 'NEGA': '40', 'TSX': '30', 'TXS': '35', 'MUL': '3d',
        'INS': '31', 'DES': '34'}
 REL = {'BRA': '20', 'BNE': '26', 'BEQ': '27', 'BCC': '24', 'BCS': '25', 'BMI': '2b', 'BPL': '2a', 'BHI': '22',
        'BLS': '23', 'BSR': '8d', 'BVS': '29', 'BVC': '28', 'BGE': '2c', 'BLT': '2d', 'BGT': '2e', 'BLE': '2f'}
@@ -133,6 +147,11 @@ def assemble(src, org):
             elif op in ('BSET', 'BCLR'):
                 a, m = arg.split(' ')
                 code = bytes.fromhex(OPS[op]['ix']) + bytes([num(a.split(',')[0], L), num(m.lstrip('#'), L)])
+            elif op in ('BRSET', 'BRCLR'):                      # BRSET $16,X #$08 label (indexed X only)
+                a, m, t2 = arg.split(' ')
+                off = (num(t2, L) - (pc + 4)) if pas else 0
+                assert -128 <= off <= 127, 'branch out of range: ' + t
+                code = bytes([0x1e if op == 'BRSET' else 0x1f, num(a.split(',')[0], L), num(m.lstrip('#'), L), off & 0xff])
             else:
                 if arg.startswith('#'): mode, v = 'imm', num(arg[1:], L)
                 elif arg.endswith(',X'): mode, v = 'ix', num(arg[:-2], L)
@@ -156,6 +175,8 @@ INIT:
     STAA {R('RQW')}
     STAA {R('RQV')}
     CLR {R('BUSY')}
+    JSR V3CLR                       ; R03: no voice holds a note
+    CLR {R('V3M')}                   ; and the channels are R02's, as $17 = 0 is
     JMP ${SYSEXINIT:04X}
 
 ; DISP: from $82B1, A = the id byte after the header, not 01..04
@@ -582,6 +603,336 @@ DC_NO:
     INS
     JMP ${DCSKIP:04X}
 """
+SRC += re.sub(r"\b(V3[A-Z0-9]+)(\+\d)?\b", lambda m: "$%04X" % (RAM[m.group(1)] + int(m.group(2) or 0)) if m.group(1) in RAM else m.group(0),
+              r"""
+; --- R03: three channels ----------------------------------------------------------------------------------------------
+; PATCH_MODE2 ($17 in the edit buffer): low nibble = how many channels above the base channel osc 2 listens on, high nibble =
+; osc 3 (mod 16); osc 1 listens on the base channel. With $17 = 0 every path below hands over to R33's code unchanged.
+
+; ICH: from $81A4, the MIDI interrupt's channel test for 8x, 9x, Bx and Ex, A = B = the status byte. The base channel passes as
+; before; note on and off also pass on osc 2's and osc 3's channels. Accepted -> $81AD (into the ring buffer), else $81C4.
+ICH:
+    LDX $1206
+    SUBB $00,X
+    ANDB #$0F                       ; B = channels above the base channel
+    BEQ IC_OK
+    PSHA
+    ANDA #$E0
+    CMPA #$80                       ; 8x or 9x
+    BNE IC_NO
+    LDX $1220
+    LDAA $17,X
+    ANDA #$0F
+    CBA
+    BEQ IC_OK2
+    LDAA $17,X
+    LSRA
+    LSRA
+    LSRA
+    LSRA
+    CBA
+    BEQ IC_OK2
+IC_NO:
+    PULA
+    JMP $81C4
+IC_OK2:
+    PULA
+IC_OK:
+    JMP $81AD
+
+; POLYQ: C = Poly as the engine sees it: the patch's Poly bit, but off with three channels. A, B, X, Y kept (BRCLR and PULX do
+; not touch the flags, TST clears C). Called where R33 tests BRSET $16,Y #$08 (then BCS to the same place); no caller reads
+; another flag.
+POLYQ:
+    PSHX
+    LDX $1220
+    CLC
+    BRCLR $16,X #$08 PQ_X
+    TST $17,X
+    BNE PQ_X
+    SEC
+PQ_X:
+    PULX
+    RTS
+
+; Q8F13: from $8F13 in the event dispatch $8F0D, X = the edit buffer, A = $2D (not 0)
+Q8F13:
+    JSR POLYQ
+    BCC Q_S
+    JMP $8F4A
+Q_S:
+    BITA #$D0                       ; as BRCLR $2D,X #$D0 $8F12
+    BNE Q_GO
+    RTS
+Q_GO:
+    JMP $8F1B
+
+; V3CLR: no voice holds a note. Ends with X = the edit buffer, as the LDX $1220 it replaces at $8DA9 (CC 123).
+V3CLR:
+    LDX #V3L
+    LDAA #$FF
+VC_L:
+    STAA $00,X
+    INX
+    CPX #V3LE
+    BNE VC_L
+    LDX $1220
+    RTS
+
+; N3OFF, N3ON: from the consumer's dispatch ($8D0A, $8D0D), X = the status byte in the ring buffer ($15xx); A and B are dead
+; (both R33 handlers start with XGDX). Without three channels on to R33's note off ($8E34) and note on ($8E72).
+N3OFF:
+    BSR N3Q
+    JMP $8E34
+N3ON:
+    BSR N3Q
+    JMP $8E72
+
+; N3Q: returns when $17 = 0 and was 0 at the last note (R02's path), else does not return. When $17 changed since the last note
+; (a program change, a DP frame), the message goes back to the ring buffer and CC 123's code runs first ($8DA9): every held note
+; is forgotten, R33's and the voices', and all three oscillators get released. Then the message is read again, on the new channels.
+N3Q:
+    PSHX
+    LDX $1220
+    LDAA $17,X
+    PULX
+    CMPA V3M
+    BNE NQ_NEW
+    TSTA
+    BNE NQ_3
+    RTS
+NQ_NEW:
+    STAA V3M
+    INC $1205                       ; the message is unread again (count only; $1204 was not moved)
+    INS
+    INS
+    JMP $8DA9
+NQ_3:
+    INS
+    INS
+
+; N3: the message (status, note, velocity) to every voice whose channel it is on. Afterwards $2D gets $80 after a note on and
+; $08 after a note off, as R33's handlers leave it for the LFOs ($9181), and a note on ends the tick as R33's does ($8EF4), so
+; the dispatch at $8CCC never sees the $80.
+N3:
+    LDAA $00,X
+    STAA V3ST
+    BSR NEXTB
+    LDAA $00,X
+    STAA V3NT
+    BSR NEXTB
+    LDAA $00,X
+    STAA V3VL
+    BSR NEXTB
+    XGDX
+    STAB $1204                      ; the message is read
+    LDX $1220
+    LDAA $2D,X
+    STAA V32D
+    LDX $1206
+    LDAB V3ST
+    SUBB $00,X
+    ANDB #$0F
+    STAB V3D                        ; channels above the base channel
+    CLR V3EV
+    CLR V3K
+N3_V:
+    LDX $1220
+    LDAA $17,X
+    LDAB V3K
+    BEQ N3_C0
+    CMPB #$01
+    BNE N3_3
+    ANDA #$0F
+    BRA N3_C
+N3_3:
+    LSRA
+    LSRA
+    LSRA
+    LSRA
+    BRA N3_C
+N3_C0:
+    CLRA
+N3_C:
+    CMPA V3D
+    BNE N3_NX
+    JSR VOICE
+N3_NX:
+    INC V3K
+    LDAA V3K
+    CMPA #$03
+    BNE N3_V
+    LDX $1220
+    LDAA V32D
+    ORAA V3EV
+    STAA $2D,X
+    LDAA V3EV
+    BITA #$C0
+    BNE N3_END                      ; a note on (new or legato) ends the tick, as R33's ($8EF4)
+    JMP $8CC5                       ; next message
+N3_END:
+    RTS
+NEXTB:
+    XGDX
+    INCB                            ; within the ring buffer's page
+    XGDX
+    RTS
+
+; VOICE: the message for voice V3K: its held notes (4) at V3L + 4 * V3K.
+VOICE:
+    LDAB V3K
+    ASLB
+    ASLB
+    LDX #V3L
+    ABX
+    STX V3P
+    LDAA V3ST
+    BITA #$10                       ; 9x
+    BEQ V_OFF
+    TST V3VL
+    BEQ V_OFF
+    LDX $1228
+    LDAA V3VL
+    STAA $02,X                      ; the velocity, as R33 ($8E80)
+    JSR TOTAL
+    TSTB
+    BNE V_ON1
+    JSR $8840                       ; the first key held: LED, as R33 ($8E91)
+V_ON1:
+    LDX V3P
+    JSR COUNT4
+    LDAA #$80                       ; no key held on this voice: a new note
+    TSTB
+    BEQ V_ON2
+    LDX $1220
+    BRSET $19,X #$40 V_RE           ; Force NoteOn ReInit: a new note even so
+    LDAA #$40                       ; legato
+    BRA V_ON2
+V_RE:
+    LDAB #$FE                       ; and the gates drop for a tick, as R33 ($8E9D); $123D is all voices', as in R33
+    STAB $123D
+V_ON2:
+    STAA V3E
+    LDX V3P                         ; remember the note: held already, or a free place (a fifth note plays, unremembered)
+    LDAB #$04
+V_F:
+    LDAA $00,X
+    CMPA V3NT
+    BEQ V_GO
+    INX
+    DECB
+    BNE V_F
+    LDX V3P
+    LDAB #$04
+V_E:
+    TST $00,X
+    BMI V_PUT
+    INX
+    DECB
+    BNE V_E
+    BRA V_GO
+V_PUT:
+    LDAA V3NT
+    STAA $00,X
+V_GO:
+    LDAA V3EV
+    ORAA V3E                        ; $80 or $40: a legato note does not restart the LFOs
+    STAA V3EV
+    JMP V_SEND
+V_OFF:
+    LDX V3P
+    LDAB #$04
+V_O:
+    LDAA $00,X
+    CMPA V3NT
+    BEQ V_DEL
+    INX
+    DECB
+    BNE V_O
+    RTS                             ; a note this voice does not hold
+V_DEL:
+    LDAA #$FF
+    STAA $00,X
+    LDAA V3EV
+    ORAA #$08
+    STAA V3EV
+    LDX V3P
+    JSR COUNT4
+    TSTB
+    BNE V_RTS                       ; other keys still held on this voice: nothing, as R33
+    JSR TOTAL
+    TSTB
+    BNE V_SAVE
+    JSR $8849                       ; the last key: LED, as R33 ($8E65)
+V_SAVE:
+    LDX $1220                       ; the filter envelope, kept if another voice still holds a key
+    LDAA $2E,X
+    STAA V3F
+    LDAA $2F,X
+    STAA V3F+1
+    LDD $32,X
+    STD V3F+2
+    LDAA #$10                       ; released
+    STAA V3E
+    JSR V_SEND
+    JSR TOTAL
+    TSTB
+    BEQ V_RTS
+    LDX $1220
+    LDAA V3F
+    STAA $2E,X
+    LDAA V3F+1
+    STAA $2F,X
+    LDD V3F+2
+    STD $32,X
+V_RTS:
+    RTS
+
+; V_SEND: event V3E ($80 note, $40 legato, $10 released) for voice V3K through R33's single-mode routine $8BE7: the note in $46,
+; the event in $2D for the call, $120E = the voice's patch part, X = its oscillator. $2D as it was afterwards.
+V_SEND:
+    LDX $1220
+    LDAA V3NT
+    STAA $46,X
+    LDAA V3E
+    STAA $2D,X
+    LDAB V3K
+    LDAA #$15
+    MUL
+    ADDD #$0047
+    ADDD $1220
+    STD $120E
+    LDAB V3K
+    LDAA #$29
+    MUL
+    ADDD $1222
+    XGDX
+    LDY $1220
+    JSR $8BE7
+    LDX $1220
+    LDAA V32D
+    STAA $2D,X
+    RTS
+
+; TOTAL: B = the notes all voices hold; COUNT4: B = the notes held at X (4)
+TOTAL:
+    LDX #V3L
+    LDAA #$0C
+    BRA CNT
+COUNT4:
+    LDAA #$04
+CNT:
+    CLRB
+CN_L:
+    TST $00,X
+    BMI CN_N
+    INCB
+CN_N:
+    INX
+    DECA
+    BNE CN_L
+    RTS
+""")
 
 CODE, L = assemble(SRC, ORG)
 def typed(text, last):
@@ -592,7 +943,7 @@ INTRO = (0xE21E,
          bytes.fromhex('00001801850008') + bytes.fromhex('4f00530031012e01310030002000520033003308') + b'\xc6'
          + bytes([x for ch in b'(C) 2000' for x in (ch, 0)]) + bytes.fromhex('0014'),
          bytes.fromhex('180185') + bytes.fromhex('4f005300') + b'\x88' + bytes.fromhex('31012e0131003200') + b'\x8d'
-         + bytes.fromhex('5200300032') + bytes.fromhex('08') + b'\xc5' + typed(b'norrby/2026', 0x14 + 0x08))
+         + bytes.fromhex('5200300033') + bytes.fromhex('08') + b'\xc5' + typed(b'norrby/2026', 0x14 + 0x08))
 assert len(INTRO[1]) == len(INTRO[2])
 HOOKS = [  # address, original, new
     (0x808E, bytes.fromhex('bd8114'), bytes([0xbd, L['INIT'] >> 8, L['INIT'] & 0xff])),
@@ -613,6 +964,14 @@ HOOKS += [  # R02
     (0xAF2B, bytes.fromhex('bd99a6'), jsr(0xbd, 'LSAVE')),
     (0xAFE2, bytes.fromhex('bdfa08'), jsr(0xbd, 'LFREE')),
 ]
+HOOKS += [  # R03: three channels
+    (0x81A4, bytes.fromhex('fe1206'), jsr(0x7e, 'ICH')),
+    (0x8D0A, bytes.fromhex('7e8e34'), jsr(0x7e, 'N3OFF')),
+    (0x8D0D, bytes.fromhex('7e8e72'), jsr(0x7e, 'N3ON')),
+    (0x8DA9, bytes.fromhex('fe1220'), jsr(0xbd, 'V3CLR')),
+    (0x8F13, bytes.fromhex('1e1608'), jsr(0x7e, 'Q8F13')),
+] + [(a, bytes.fromhex('181e1608') + bytes([off]), jsr(0xbd, 'POLYQ') + bytes([0x25, off]))   # BRSET $16,Y #$08 -> JSR POLYQ; BCS
+     for a, off in ((0x8B11, 0x09), (0x8B2A, 0x05), (0x8B60, 0x09), (0x8BE7, 0x37))]
 
 def build(orig):
     recs, bad = decode(orig)

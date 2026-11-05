@@ -46,9 +46,9 @@ class Build(unittest.TestCase):
         import build
         with tempfile.TemporaryDirectory() as out:
             build.main([os.path.join(R33, 'sidos_v33_1.syx'), os.path.join(R33, 'sidos_v33_2.syx'), out])
-            d = open(os.path.join(out, 'sidos_1.12_v02_2.syx'), 'rb').read()
-            self.assertEqual(hashlib.sha256(d).hexdigest(), check.V02_2)
-            self.assertEqual(open(os.path.join(out, 'sidos_1.12_v02_1.syx'), 'rb').read(), osdecode.START)
+            d = open(os.path.join(out, 'sidos_1.12_v03_2.syx'), 'rb').read()
+            self.assertEqual(hashlib.sha256(d).hexdigest(), check.V03_2)
+            self.assertEqual(open(os.path.join(out, 'sidos_1.12_v03_1.syx'), 'rb').read(), osdecode.START)
 
 if __name__ == '__main__':
     unittest.main()

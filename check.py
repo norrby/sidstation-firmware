@@ -13,10 +13,12 @@ R33_1 = '125c036a5f64d12fc3ec142b7baf06ca961b65455b69275fb6b7e473bc95710e'
 R33_2 = '94b48b7605a4d0bc4339fe8dd916760158baa44df408a37ce3595bd3f6fba194'
 V01_2 = '30a4522e39059f4fe20b7f269b2e0924c94f3ebcc60bdf25529781a460e2d746'
 V02_2 = '483fb053e31a9860ed172ad196ed6209ee18d80796c844f2c1ed89225309f772'
+V03_2 = 'c5f5fb4b291ceebdcbdc0f9970c3d6ac6d9685e8a8b1e07cdc6ed4d083039d15'
 KNOWN = {
     R33_2: 'Elektron OS 1.10 R33 (sidos_v33_2.syx)',
     V01_2: 'OS 1.12 R01: R33 + SysEx operations 05/06/07 (sidos_1.12_v01_2.syx)',
     V02_2: 'OS 1.12 R02: R01 + fixes of R33 bugs + version request 08 (sidos_1.12_v02_2.syx)',
+    V03_2: 'OS 1.12 R03: R02 + three channels (sidos_1.12_v03_2.syx)',
 }
 FLASHER = (0xFD5D, 0xFEBD)    # the flash routine, copied to RAM and run from there during an upgrade
 

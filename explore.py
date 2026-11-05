@@ -444,7 +444,25 @@ def sc_midi_cut(R):
 
 
 
-SCENARIOS = {'notes': sc_notes, 'cc': sc_cc, 'sweeps': sc_sweeps, 'program': sc_program, 'realtime': sc_realtime,
+def sc_threech(R):
+    """Three channels (R03): random channel settings in PATCH_MODE2 ($17), notes on every channel, Poly on and off, program
+    changes, all notes off and channel changes in the middle of held notes."""
+    r = R.r
+    for _ in range(300):
+        t = r.randrange(10)
+        if t == 0: R.send(dp(0x17, 0x0F, r.choice([0, 4]), r.randrange(16)), drain=False)
+        elif t == 1: R.send(dp(0x16, 0x01, 3, r.randrange(2)), drain=False)
+        elif t == 2: R.send([0xC0, r.randrange(100)], drain=False)
+        elif t == 3: R.send([0xB0, 123, 0], drain=False)
+        else:
+            ch = r.randrange(16)
+            for _ in range(r.randrange(1, 6)): R.send([0x90 | ch, r.randrange(128), r.choice([0, 1, 64, 127])], drain=False)
+            if r.random() < 0.7: R.send([0x80 | ch, r.randrange(128), 0], drain=False)
+        R.wait(r.choice([0, 1, 5, 20, 80]))
+    R.drain(500)
+
+
+SCENARIOS = {'notes': sc_notes, 'cc': sc_cc, 'sweeps': sc_sweeps, 'program': sc_program, 'threech': sc_threech, 'realtime': sc_realtime,
              'sysex': sc_sysex, 'dp_wild': sc_dp_wild, 'dc': sc_dc, 'memory': sc_memory, 'dumps': sc_dumps, 'keys': sc_keys, 'keys_midi': sc_keys_midi, 'asid': sc_asid,
              'flood': sc_flood, 'random': sc_random, 'mix': sc_mix, 'store_race': sc_store_race, 'dc_bad': sc_dc_bad,
              'midi_cut': sc_midi_cut}
