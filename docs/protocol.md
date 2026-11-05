@@ -3,13 +3,14 @@
 ## New SysEx operations (OS 1.12 R01 and later)
 
 All frames start with Elektron's SidStation header `F0 00 20 3C 01 00`, followed by an id.
-The stock OS knows ids 01–04; R01 adds 05–07. Any other id is ignored, as before.
+The stock OS knows ids 01–04; R01 adds 05–07 and R02 adds 08. Any other id is ignored, as before.
 
 | Request | Frame | Reply |
 |---|---|---|
 | 05 dump request | `F0 00 20 3C 01 00 05 <slot> F7` | the front panel's Patch dump of that slot |
 | 06 settings request | `F0 00 20 3C 01 00 06 F7` | `F0 00 20 3C 01 00 46 <15 values> F7` |
 | 07 store | `F0 00 20 3C 01 00 07 7F F7` | `F0 00 20 3C 01 00 47 <8 values> F7` |
+| 08 version request (R02) | `F0 00 20 3C 01 00 08 F7` | `F0 00 20 3C 01 00 48 <count> <count values> F7` |
 
 - **05:** `slot` is 0–99, or 7F for the current slot. The reply is what the front panel's
   *Patch dump* sends: an 02 frame with the **stored** patch, or an 03 frame if the slot is empty.
@@ -21,9 +22,9 @@ The stock OS knows ids 01–04; R01 adds 05–07. Any other id is ignored, as be
 - A request is registered only when its F7 arrives; a malformed frame is dropped without a reply.
   Realtime bytes (F8–FF) inside a frame are handled as usual. Requests are served from the main
   loop, between two ticks of the sound engine, never inside the MIDI interrupt.
-- Reply ids are 40 + the request id. The OS ignores 46 and 47 if they are ever echoed back to it.
+- Reply ids are 40 + the request id. The OS ignores 46, 47 and 48 if they are ever echoed back to it.
 
-Every value in a 46 or 47 reply is sent as two bytes, low nibble first, as the patch data in a dump.
+Every value in a 46, 47 or 48 reply is sent as two bytes, low nibble first, as the patch data in a dump.
 
 ### 46: settings
 
@@ -55,6 +56,19 @@ Every value in a 46 or 47 reply is sent as two bytes, low nibble first, as the p
 
 With status 1–3 nothing was changed.
 
+### 48: version
+
+| # | Value |
+|---|---|
+| 1 | count: the number of values that follow (3 in R02) |
+| 2 | major version (1) |
+| 3 | minor version (12) |
+| 4 | revision (2 for R02) |
+
+A later version may add values after these and raise the count. A reader takes the count first, reads the values
+it knows and skips the rest, so an older reader still gets the version. OS 1.12 R01 does not answer 08; the stock
+OS answers neither 06 nor 08. Example, R02: `F0 00 20 3C 01 00 48 03 00 01 00 0C 00 02 00 F7`.
+
 ## OS file format
 
 An OS upgrade is two files. `_1` is a single start frame; `_2` holds the data frames and the end frame.
@@ -77,7 +91,7 @@ F0 00 45 01 69 F7              done: restart
 
 ## Fixes of R33 bugs (OS 1.12 R02)
 
-R02 is R01 with these fixes; the SysEx operations are unchanged.
+R02 is R01 with these fixes and the version request 08; the operations 05–07 are unchanged.
 
 1. **Patch frames during a store.** R33 receives a patch (02) inside the MIDI interrupt, and allocates its memory
    there. Store and Delete on the front panel move the patches in memory with interrupts enabled, and both use the

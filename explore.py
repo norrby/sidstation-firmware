@@ -159,7 +159,7 @@ def call(m, addr):
 
 
 def sc_sysex(R):
-    """SysEx: the editor's frames (DP for every patch byte), the OS's own requests (05/06/07), patch dumps, the 01
+    """SysEx: the editor's frames (DP for every patch byte), the OS's own requests (05/06/07/08), patch dumps, the 01
     frame, and broken frames: truncated, unterminated, with status bytes inside, wrong ids, huge."""
     r = R.r
     hdr = HDR
@@ -171,6 +171,7 @@ def sc_sysex(R):
         R.send(hdr + [0x05, s, 0xF7]); R.wait(400)
     R.send(hdr + [0x06, 0xF7]); R.wait(300)
     R.send(hdr + [0x07, 0x7F, 0xF7]); R.wait(800)
+    R.send(hdr + [0x08, 0xF7]); R.wait(300)
     for _ in range(200):                                  # broken frames
         kind = r.randrange(6)
         if kind == 0: f = hdr[:r.randrange(1, 7)]
@@ -342,7 +343,7 @@ def sc_mix(R, bank):
         elif t == 4: R.send(dp_valid(r, r.randrange(0x27C)), drain=False)
         elif t == 5: R.send(HDR + [0x05, r.choice([0x7F, r.randrange(100)]), 0xF7], drain=False)
         elif t == 6: R.send(HDR + [0x06, 0xF7], drain=False)
-        elif t == 7: R.send(HDR + [0x07, 0x7F, 0xF7], drain=False)
+        elif t == 7: R.send(HDR + [r.choice([0x07, 0x08]), 0x7F if r.random() < 0.5 else 0xF7, 0xF7], drain=False)
         elif t == 8: R.send([0xF8] * r.randrange(1, 50) + [r.choice([0xFA, 0xFB, 0xFC])], drain=False)
         elif t == 9:
             for _ in range(r.randrange(1, 20)): m.encoder(r.random() < 0.5); R.wait(r.choice([1, 8, 30]))

@@ -190,7 +190,7 @@ class Synth:
         for x in bs:
             if not outs: self.m[STATE:STATE + 2] = (0x829B).to_bytes(2, 'big')
             r, cpu = self.isr(x); outs.append(r)
-            assert set(cpu.writes) <= {RAM['REQ'], RAM['TMP'], RAM['OP'], RAM['RQS'], RAM['RQW'], STATE, STATE + 1, 0x1000} \
+            assert set(cpu.writes) <= {RAM['REQ'], RAM['TMP'], RAM['OP'], RAM['RQS'], RAM['RQW'], RAM['RQV'], STATE, STATE + 1, 0x1000} \
                 | set(range(0x1F00, 0x2000)), 'the receiver writes outside its variables'
         return outs
     def tick(self):
@@ -268,13 +268,19 @@ def selftest(img, seed=1):
     assert v == [1, 0, 5, 5, 1, 120, 3, 0, 100, 4, 0x08, 0x23, 0x0A, 0x2B, 0], v
     assert sy.tick().tx == [], 'one request gives one reply'
     assert sy.frame([6, 0x00]) == ['RTI', 'RTI'] and sy.tick().tx == [], '06 with a data byte: no request'
+    # 08: the version reply, count first
+    assert sy.frame([8, 0xF7]) == ['RTI', 'RTI'] and sy.state() == IDLE
+    v = reply(sy.tick(), 0x48)
+    assert v == [3, 1, 12, 2] and v[1:] == list(VERSION), v
+    assert sy.tick().tx == [], 'one request gives one reply'
+    assert sy.frame([8, 0x00]) == ['RTI', 'RTI'] and sy.tick().tx == [], '08 with a data byte: no request'
     # 05 as before: slot 7, 7F = current, 99, refusals
     sy.frame([5, 7, 0xF7]); c = sy.tick(); assert c.tx[6] in (2, 3) and DUMP in c.calls
     sy.frame([5, 0x7F, 0xF7]); c = sy.tick(); assert c.tx[6] == 2 and (c.tx[8] << 7 | c.tx[9]) == pats[5][0]
     for bad in (100, 0x7D, 0x7E): assert sy.frame([5, bad]) == ['RTI', 'RTI'] and sy.state() == IDLE and sy.tick().tx == []
     assert sy.frame([5, 0xF8, 3, 0xFE, 0xF7]) == ['RTI', REALTIME, 'RTI', REALTIME, 'RTI'] and sy.tick().tx[6] in (2, 3)
     sy.frame([5]); r, cpu = sy.isr(0x90); assert r == STATUS and cpu.a == 0x90 and sy.tick().tx == []
-    for bad in (0, 8, 0x45, 0x46, 0x47, 0x7F):
+    for bad in (0, 9, 0x45, 0x46, 0x47, 0x48, 0x7F):
         sy.m[STATE:STATE + 2] = (0x829B).to_bytes(2, 'big'); r, cpu = sy.isr(bad)
         assert r == 'RTI' and sy.state() == IDLE and set(cpu.writes) <= {STATE, STATE + 1}, 'id %02X' % bad
     # 07 with anything but 7F is refused
@@ -332,10 +338,10 @@ def selftest(img, seed=1):
     v = reply(sy.tick(), 0x47); assert v[0] == 3 and sy.unchanged(snap)
     sy = Synth(img, pats, 100); snap = bytes(sy.m[0x1600:HEAPTOP])
     st, *_ = store(sy); assert st == 2 and sy.unchanged(snap)
-    # all three requests pending at once: dump, settings, store in that order
-    sy = Synth(img, pats, cur); sy.frame([5, 7, 0xF7]); sy.frame([6, 0xF7]); sy.frame([7, 0x7F, 0xF7])
+    # all four requests pending at once: dump, settings, store, version in that order
+    sy = Synth(img, pats, cur); sy.frame([8, 0xF7]); sy.frame([5, 7, 0xF7]); sy.frame([6, 0xF7]); sy.frame([7, 0x7F, 0xF7])
     t = sy.tick().tx; ids = [t[k + 6] for k in range(len(t) - 6) if t[k:k + 6] == HDR]
-    assert ids[0] in (2, 3) and ids[1:] == [0x46, 0x47], ids
+    assert ids[0] in (2, 3) and ids[1:] == [0x46, 0x47, 0x48], ids
     assert sy.m[RAM['BUSY']] == 0, 'BUSY left set by STORE'
     fixes(img, pats)
     shots, t, k = intro(img)

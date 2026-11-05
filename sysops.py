@@ -6,6 +6,7 @@
 #   06 settings request  F0 00 20 3C 01 00 06 F7          Reply: F0 00 20 3C 01 00 46 <15 values> F7
 #   07 store             F0 00 20 3C 01 00 07 7F F7       stores the edit buffer to the current slot.
 #                                                         Reply: F0 00 20 3C 01 00 47 <8 values> F7
+#   08 version request   F0 00 20 3C 01 00 08 F7          Reply: F0 00 20 3C 01 00 48 <count> <count values> F7 (R02)
 # The replies are described in docs/protocol.md.
 #
 # The store does what the front panel's Store does ($AF0D-$AF2A: free the old patch, $FA08, then $99A6), except that it
@@ -13,7 +14,7 @@
 #
 # Changes to the original:
 #   $808E  JSR $8114 -> JSR INIT    init: no pending requests before the SysEx state is set
-#   $82B1  LDD #$81F8 -> JMP DISP   the ID dispatch: an unknown id (not 01..04) is tested against 05..07
+#   $82B1  LDD #$81F8 -> JMP DISP   the ID dispatch: an unknown id (not 01..04) is tested against 05..08
 #   $A1EB  JSR $A205 -> JSR TICK    the main loop: pending requests are served before the wait for the next tick
 # Fixes of bugs in R33 (R02):
 #   $8232  LDX #$823B -> JMP MIDIERR  a status byte before a channel message was complete restarted the synth
@@ -42,7 +43,8 @@ FREE = (0xB0E5, 0xB7FF)
 RAM = {'REQ': 0x13E0, 'TMP': 0x13E1, 'OP': 0x13E2, 'RQS': 0x13E3, 'RQW': 0x13E4,
        'SLOT': 0x13E5, 'NEWSZ': 0x13E6, 'SUM': 0x13E8, 'FREEB': 0x13EA,     # in reply order (sent as one run)
        'OLDH': 0x13EC, 'HEND': 0x13EE, 'PER': 0x13F0,                       # PER: 5 bytes
-       'BUSY': 0x13F5, 'ENDP': 0x13F6}                                        # ENDP: 2 bytes
+       'BUSY': 0x13F5, 'ENDP': 0x13F6, 'RQV': 0x13F8}                         # ENDP: 2 bytes
+VERSION = (1, 12, 2)   # OS 1.12 R02, the 48 reply
 IDLE = 0x81F8          # the SysEx idle state (state pointer $7FFC)
 STATE = 0x7FFC
 STATUS = 0x8142        # handles A as a new status byte (does its own TAB)
@@ -152,6 +154,7 @@ INIT:
     STAA {R('REQ')}
     STAA {R('RQS')}
     STAA {R('RQW')}
+    STAA {R('RQV')}
     CLR {R('BUSY')}
     JMP ${SYSEXINIT:04X}
 
@@ -162,6 +165,8 @@ DISP:
     CMPA #$07
     BEQ D_SLOT
     CMPA #$06
+    BEQ D_END
+    CMPA #$08
     BEQ D_END
 IDLE_RTI:
     LDX #${IDLE:04X}                 ; unknown id: idle state, as the original
@@ -234,6 +239,11 @@ E_6:
     CLR {R('RQS')}
     BRA E_DONE
 E_7:
+    CMPB #$08
+    BNE E_W
+    CLR {R('RQV')}
+    BRA E_DONE
+E_W:
     CLR {R('RQW')}
 E_DONE:
     BRA ABORT                       ; frame done: LED off, idle state
@@ -269,8 +279,13 @@ T_S:
 T_W:
     LDX #{R('RQW')}
     BSR TAKE
-    BNE T_END
+    BNE T_V
     JSR STORE
+T_V:
+    LDX #{R('RQV')}
+    BSR TAKE
+    BNE T_END
+    JSR OSVER
 T_END:
     PULY
     PULX
@@ -318,6 +333,22 @@ SETTINGS:
     LDX #{R('PER')}
     LDAB #5
     JSR ${0x84E6:04X}               ; B bytes from (X)+ as nibbles: period, ExtCl period, lock counter
+    JMP SEND_F7
+
+; OSVER: the 48 reply: the number of values that follow, then major, minor, revision. A later version may add
+; values after these; a reader takes the count first and skips the values it does not know.
+OSVER:
+    JSR ${HEADER:04X}
+    LDAA #$48
+    JSR ${TX:04X}
+    LDAA #3
+    JSR ${TXNIB:04X}
+    LDAA #{VERSION[0]}
+    JSR ${TXNIB:04X}
+    LDAA #{VERSION[1]}
+    JSR ${TXNIB:04X}
+    LDAA #{VERSION[2]}
+    JSR ${TXNIB:04X}
     JMP SEND_F7
 
 ; STORE: the edit buffer to the current slot, then the 47 reply. BUSY is set from before the busy test to the reply.

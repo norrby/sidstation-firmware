@@ -7,7 +7,7 @@ A patch for the **Elektron SidStation**'s OS 1.10 R33 that adds three SysEx oper
 - **06** settings request: MIDI channel, current slot, clock source, update rate and more
 - **07** store: store the edit buffer to the current slot and report the result
 
-It also fixes bugs in R33 that can corrupt the patch memory or crash the synth (see
+It also answers a version request (08) and fixes bugs in R33 that can corrupt the patch memory or crash the synth (see
 [Fixes](docs/protocol.md#fixes-of-r33-bugs-os-112-r02)).
 
 The result is **OS 1.12 R02**; everything else is R33 byte for byte. Details in
@@ -38,7 +38,7 @@ python3 check.py out/sidos_1.12_v02_2.syx out/sidos_1.12_v02_1.syx --orig sidos_
 ```
 
 `build.py` checks the inputs, applies the patch, runs the self-test and writes
-`out/sidos_1.12_v02_1.syx` and `out/sidos_1.12_v02_2.syx` (SHA-256 `94c94a3e0b1ebd566a99292ecff1675cd439171748c3c56cae84238abefee953`;
+`out/sidos_1.12_v02_1.syx` and `out/sidos_1.12_v02_2.syx` (SHA-256 `483fb053e31a9860ed172ad196ed6209ee18d80796c844f2c1ed89225309f772`;
 the build always gives exactly this file). The self-test runs the new code in a 68HC11 emulator
 together with the R33 routines it calls, on a patch memory of made-up patches. `check.py` checks a
 file before it is sent. Nothing here sends MIDI.
