@@ -1,19 +1,21 @@
 # SidStation Firmware
 
-A patch for the **Elektron SidStation**'s OS 1.10 R33 that adds three SysEx operations, used by
-[SidStation Editor](https://github.com/norrby/sidstation-editor):
+A patch for the **Elektron SidStation**'s OS 1.10 R33, used by
+[SidStation Editor](https://github.com/norrby/sidstation-editor). The result is **OS 1.12 R03**:
 
 - **05** dump request: send the stored patch of a slot
 - **06** settings request: MIDI channel, current slot, clock source, update rate and more
 - **07** store: store the edit buffer to the current slot and report the result
+- **08** version request: the synth says which OS it runs
+- **Three channels:** oscillators 2 and 3 can play notes on MIDI channels of their own, so one patch
+  plays up to three parts ([Three channels](docs/protocol.md#three-channels-os-112-r03))
+- **Fixes of R33 bugs** that can corrupt the patch memory or restart the synth
+  ([Fixes](docs/protocol.md#fixes-of-r33-bugs-os-112-r02))
 
-It also answers a version request (08), fixes bugs in R33 that can corrupt the patch memory or crash the synth (see
-[Fixes](docs/protocol.md#fixes-of-r33-bugs-os-112-r02)), and lets oscillators 2 and 3 play notes on MIDI channels of
-their own, so one patch plays up to three parts (see
-[Three channels](docs/protocol.md#three-channels-os-112-r03)).
-
-The result is **OS 1.12 R03**; everything else is R33 byte for byte. Details in
-[docs/protocol.md](docs/protocol.md); why not R34 in [docs/r34.md](docs/r34.md).
+Everything else is R33 byte for byte. Details in [docs/protocol.md](docs/protocol.md); why not R34
+in [docs/r34.md](docs/r34.md). Earlier versions are on the
+[Releases](https://github.com/norrby/sidstation-firmware/releases) page: R01 (05–07) and R02 (R01, 08 and
+the fixes).
 
 Not affiliated with or endorsed by Elektron. **Use at your own risk:** a failed upgrade can leave
 the synth without an operating system.
