@@ -60,14 +60,14 @@ With status 1–3 nothing was changed.
 
 | # | Value |
 |---|---|
-| 1 | count: the number of values that follow (3 in R02) |
+| 1 | count: the number of values that follow (3 in R02 and R03) |
 | 2 | major version (1) |
 | 3 | minor version (12) |
-| 4 | revision (2 for R02) |
+| 4 | revision (2 for R02, 3 for R03) |
 
 A later version may add values after these and raise the count. A reader takes the count first, reads the values
 it knows and skips the rest, so an older reader still gets the version. OS 1.12 R01 does not answer 08; the stock
-OS answers neither 06 nor 08. Example, R02: `F0 00 20 3C 01 00 48 03 00 01 00 0C 00 02 00 F7`.
+OS answers neither 06 nor 08. Example, R03: `F0 00 20 3C 01 00 48 03 00 01 00 0C 00 03 00 F7`.
 
 ## OS file format
 
@@ -111,3 +111,31 @@ R02 is R01 with these fixes and the version request 08; the operations 05–07 a
    dropped and the byte handled as a new status byte.
 5. **Direct control targets above 82.** CC 16–19 with a direct control target of 83 or more made R33 read past
    its table and jump to a random address. Such a target now does nothing.
+
+## Three channels (OS 1.12 R03)
+
+R03 is R02 with one addition: oscillators 2 and 3 can play notes on MIDI channels of their own, so one patch plays up
+to three parts. Oscillator 1 stays on the synth's base channel (System > MIDI).
+
+The channels are kept in the patch, in byte 23 (PATCH_MODE2, address 17 hex in the edit buffer, unused before R03):
+
+| Bits | Value |
+|---|---|
+| 0–3 | oscillator 2's channel, as steps above the base channel (mod 16) |
+| 4–7 | oscillator 3's channel, the same way |
+
+A step of 0 means the base channel. Every older patch has 0 in this byte, and then the synth behaves exactly as R02.
+The byte is set like any other patch byte: in a patch frame (02), or with a DP frame (04) at address 17. Because
+the steps count from the base channel, a stored patch keeps its parts apart on a synth with another base channel.
+
+With a channel of its own for oscillator 2 or 3:
+
+1. Only note on and note off follow the oscillators' channels. Every other message (CC, pitch bend, program change,
+   SysEx) is read on the base channel only, as before.
+2. Each oscillator plays the notes of its channel one at a time, as in Single mode, with its own sound, delay and
+   Active setting. Two oscillators on the same channel play the same notes.
+3. Poly counts as off.
+4. The filter envelope releases when no oscillator holds a note.
+5. On CC 123 (all notes off), and when the channels have changed since the last note (a program change, a patch
+   frame, a DP frame at 17), every held note is forgotten and all three oscillators are released; after a change this
+   happens when the next note arrives, which then plays on the new channels.
